@@ -16,6 +16,13 @@ let pool; // will hold our connection pool
 async function initDb() {
   console.log('Initializing database connection...');
 
+  // Basic safety check so we fail fast if something is missing
+  if (!DB_HOST || !DB_USER || !DB_PASSWORD) {
+    throw new Error(
+      `Missing DB env vars. Got: DB_HOST=${DB_HOST}, DB_USER=${DB_USER}, DB_PASSWORD=${DB_PASSWORD ? '***' : 'MISSING'}`
+    );
+  }
+
   // 1) First connect WITHOUT database to create it if needed
   const connection = await mysql.createConnection({
     host: DB_HOST,
@@ -70,9 +77,24 @@ async function initDb() {
   console.log('✅ Database ready');
 }
 
-// Simple health check
+// Simple health check (for humans)
 app.get('/', (req, res) => {
   res.send('Mini Task Manager API is running (MySQL RDS backend)');
+});
+
+// Health check for load balancer / monitoring
+app.get('/health', async (req, res) => {
+  if (!pool) {
+    return res.status(503).json({ status: 'DB_NOT_INITIALIZED' });
+  }
+
+  try {
+    await pool.query('SELECT 1 AS ok');
+    res.json({ status: 'OK' });
+  } catch (err) {
+    console.error('Healthcheck DB error:', err);
+    res.status(500).json({ status: 'DB_ERROR' });
+  }
 });
 
 // Return tasks from DB
@@ -97,5 +119,6 @@ initDb()
   })
   .catch((err) => {
     console.error('❌ Failed to initialize DB:', err);
+    // In ECS this will cause the task to stop, which is what we want
     process.exit(1);
   });
